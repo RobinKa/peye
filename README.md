@@ -1,4 +1,4 @@
-# pupiltracking
+# peye
 A python library to quickly and accurately localize the eyes' pupils
 [Demo video](https://www.youtube.com/watch?v=zMMMuSPQkhk)
 
@@ -10,6 +10,8 @@ A python library to quickly and accurately localize the eyes' pupils
   - [pytocl](https://github.com/ToraxXx/pytocl)
   
 # Usage
+[Webcam example](https://github.com/ToraxXx/peye/blob/master/examples/camera.py)
+
 ```python
 import cv2
 from peye import EyeDetector, PupilDetector
@@ -25,7 +27,7 @@ eyes = eye_detector.detect(image)
 # Specify the maximum amount of pixels to be considered without downscaling
 # (Higher = more accurate but slower)
 pupil_detector = PupilDetector(500)
-pupils = [pupil_detector.detect(eye) for eye in eyes]
+pupils = [pupil_detector.detect(eye[eye[1]:eye[3], eye[0]:eye[2]]) for eye in eyes]
 ```
 
 # Contributors
