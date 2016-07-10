@@ -8,7 +8,7 @@ def main():
     image_count = 0
     
     eye_detector = EyeDetector()
-    pupil_detector = PupilDetector(MAX_PIXEL_COUNT)
+    pupil_detector = PupilDetector(MAX_PIXEL_COUNT, cluster_mode=None, use_opencl=False)
     
     cap = cv2.VideoCapture(0)
     while True:
