@@ -9,62 +9,75 @@ from multiprocessing.pool import Pool
 # Optional pytocl for opencl
 if importlib.util.find_spec("pytocl"):
     from pytocl import *
+    import pyopencl as cl
 
 # Optional sklearn for clustering
 if importlib.util.find_spec("sklearn"):
     from sklearn.cluster import KMeans
 
-def _make_cl_func(max_pixel_count):
-    def calc_objective(image, gradients, output, rows, cols):
+def _make_cl_func(context, max_pixel_count):
+    def calc_objective(image, nonzero_grads, nonzero_coords, nonzero_count, output, rows, cols):
         i = get_global_id(0)
         j = get_global_id(1)
-        
+
         if i >= rows or j >= cols:
             return
         
         objective = 0
         
-        for g_i in range(rows):
-            for g_j in range(cols):
-                d_i = g_i - i
-                d_j = g_j - j
-                
-                mag = sqrt(d_i * d_i + d_j * d_j)
-                
-                d_i /= mag + 0.001
-                d_j /= mag + 0.001
-                
-                dot = max(0.0, d_i * gradients[g_j + g_i * cols] + d_j * gradients[g_j + g_i * cols + rows * cols])
-                
-                objective += dot * dot
+        for i_nz_index in range(nonzero_count):
+            g_i = nonzero_coords[2*i_nz_index]
+            g_j = nonzero_coords[2*i_nz_index+1]
+
+            d_i = g_i - i
+            d_j = g_j - j
             
+            mag = sqrt(d_i * d_i + d_j * d_j)
+                
+            d_i /= mag + 0.001
+            d_j /= mag + 0.001
+                
+            dot = max(0.0, d_i * nonzero_grads[i_nz_index] + d_j * nonzero_grads[i_nz_index + nonzero_count])
+                
+            objective += dot * dot
+
         objective *= 1.0 - image[j + i * cols]
         output[j + i * cols] = objective
         
     global_size = (max_pixel_count, max_pixel_count)
 
     ad_image = CLArgDesc(CLArgType.float32_array, array_size=max_pixel_count**2)
-    ad_gradients = CLArgDesc(CLArgType.float32_array, array_size=2*max_pixel_count**2)
+    ad_nonzero_grads = CLArgDesc(CLArgType.float32_array, array_size=2*max_pixel_count**2) # [nz_index] -> (gx(x, y), gy(x, y))
+    ad_nonzero_coords = CLArgDesc(CLArgType.int32_array, array_size=2*max_pixel_count**2) # [nz_index] -> (x, y)
+    ad_nonzero_count = CLArgDesc(CLArgType.int32)
     ad_output = CLArgDesc(CLArgType.float32_array, array_size=max_pixel_count**2)
     ad_rows = CLArgDesc(CLArgType.int32)
     ad_cols = CLArgDesc(CLArgType.int32)
     
     func_desc = (CLFuncDesc(calc_objective, global_size)
                 .arg(ad_image).copy_in()
-                .arg(ad_gradients).copy_in()
+                .arg(ad_nonzero_grads).copy_in()
+                .arg(ad_nonzero_coords).copy_in()
+                .arg(ad_nonzero_count).copy_in()
                 .arg(ad_output, is_readonly=False).copy_out()
                 .arg(ad_rows).copy_in()
                 .arg(ad_cols).copy_in())
-                
-    cl_func = CLFunc(func_desc).compile()
     
-    def run(image, gradients, objectives):
+    cl_func = CLFunc(func_desc).compile(context or cl.create_some_context(False))
+    
+    def run(image, gradients, nonzeros, objectives):
         if(2 * len(objectives) != len(gradients.flatten()) or len(image.flatten()) != len(objectives)):
             raise Exception("Invalid size for inputs")
         
+        nonzero_coords = np.array(nonzeros, np.int32).T
+        nonzero_count = nonzero_coords.shape[0]
+        nonzero_grads = gradients[:, nonzero_coords[:, 0], nonzero_coords[:, 1]]
+
         cl_func({
             ad_image: image.flatten(),
-            ad_gradients: gradients.flatten(),
+            ad_nonzero_grads: nonzero_grads.flatten(),
+            ad_nonzero_coords: nonzero_coords.flatten(),
+            ad_nonzero_count: nonzero_count,
             ad_output: objectives,
             ad_rows: image.shape[0],
             ad_cols: image.shape[1],
@@ -97,36 +110,20 @@ def _get_objective(params):
     return np.inner(disp, grad)**2
 
 def _get_objectives(image_array, gradients, nonzeros, pool):
-    '''
-    objectives = np.zeros(image_array.shape).flatten()
-    image_coords = np.array(list(itertools.product(range(image_array.shape[0]), range(image_array.shape[1]))))
-    nonzero_coords = np.array([(nonzeros[0][k], nonzeros[1][k]) for k in range(nonzeros[0].shape[0])])
-    
-    for nz in nonzero_coords:
-        # ((,2) - (p, 2)) / (p, 1) = (p, 2)
-        disp = (nz - image_coords) / (0.001 + np.linalg.norm(nz - image_coords, axis=1).reshape(-1, 1))
-
-        # (2,)
-        grad = gradients[:, nz[0], nz[1]]
-
-        # (p, 2) * (2,) = (p,)
-        objectives += np.inner(disp, grad)**2
-    '''
-
     # Produce all possible image and nonzero coordinates
     image_coords = np.array(list(itertools.product(range(image_array.shape[0]), range(image_array.shape[1]))))
-    nonzero_coords = [(nonzeros[0][k], nonzeros[1][k]) for k in range(nonzeros[0].shape[0])]
+    nonzero_coords = np.array(nonzeros, np.int32).T
 
     # Use a thread pool to calculate all the objective values and sum them up after
     params = [(image_coords, gradients, nz) for nz in nonzero_coords]
     objectives = np.sum(pool.map(_get_objective, params), axis=0)
 
     objectives = np.maximum(objectives, 0) * (1 - image_array.flatten())
-
+    
     return objectives
 
 class PupilDetector:
-    def __init__(self, max_pixel_count, cluster_mode=None, use_opencl=False):
+    def __init__(self, max_pixel_count, cluster_mode=None, use_opencl=False, opencl_context=None):
         self.max_pixel_count = max_pixel_count
         self.cluster_mode = cluster_mode
         self.use_opencl=use_opencl
@@ -139,7 +136,7 @@ class PupilDetector:
             raise Exception("Unknown cluster mode " + str(cluster_mode))
 
         if use_opencl:
-            self.calc_objective = _make_cl_func(max_pixel_count)
+            self.calc_objective = _make_cl_func(opencl_context, max_pixel_count)
         else:
             cpus = cpu_count()
             if cpus is None:
@@ -171,13 +168,11 @@ class PupilDetector:
         grad_stddev = np.std(g)
         grad_threshold = 0.3 * grad_stddev + grad_mean
 
-        image_grad = (g > grad_threshold) * image_grad / (0.0001 + g)
-
         # Calculate the objective using opencl or normal numpy operations
         objectives = None
         if self.use_opencl:
             objectives = np.zeros(image_array.shape, np.float32).flatten()
-            self.calc_objective(image_array, image_grad, objectives)
+            self.calc_objective(image_array, image_grad, (g > grad_threshold).nonzero(), objectives)
         else:
             objectives = _get_objectives(image_array, image_grad, (g > grad_threshold).nonzero(), self.pool)
 

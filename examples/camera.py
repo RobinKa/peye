@@ -19,7 +19,7 @@ def main():
         eyes = eye_detector.detect(gray)
 
         pupils = [pupil_detector.detect(gray[eye[1]:eye[3], eye[0]:eye[2]]) for eye in eyes]
-           
+        
         for eye, pupil in zip(eyes, pupils):
             cv2.rectangle(
                 gray, 
