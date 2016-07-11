@@ -1,8 +1,8 @@
 ﻿import cv2
 
 class EyeDetector:
-    def __init__(self):
-        self.eyes_cascade = cv2.CascadeClassifier("haarcascade_eye_tree_eyeglasses.xml")
+    def __init__(self, cascade_filename):
+        self.eyes_cascade = cv2.CascadeClassifier(cascade_filename)
 
     def detect(self, im):
         detected_eyes = []

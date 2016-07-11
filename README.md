@@ -21,7 +21,7 @@ from peye import EyeDetector, PupilDetector
 image = cv2.imread("someimage.png")
 
 # Detect the bounding boxes of eyes on the image
-eye_detector = EyeDetector()
+eye_detector = EyeDetector("haarcascade_eye.xml")
 eyes = eye_detector.detect(image)
 
 # Detect the pupils' coordinates using the eyes' bounding boxes
