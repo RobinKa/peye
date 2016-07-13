@@ -24,25 +24,21 @@ def _make_cl_func(context, max_pixel_count):
             return
         
         objective = 0
-        
+
         for i_nz_index in range(nonzero_count):
-            g_i = nonzero_coords[2*i_nz_index]
-            g_j = nonzero_coords[2*i_nz_index+1]
+            i_idx_i = 2 * i_nz_index
+            i_idx_j = i_idx_i + 1
 
-            d_i = g_i - i
-            d_j = g_j - j
+            d_i = nonzero_coords[i_idx_i] - i
+            d_j = nonzero_coords[i_idx_j] - j
+            nz_grad_i = nonzero_grads[i_idx_i]
+            nz_grad_j = nonzero_grads[i_idx_j]
             
-            mag = sqrt(d_i * d_i + d_j * d_j)
-                
-            d_i /= mag + 0.001
-            d_j /= mag + 0.001
-                
-            dot = max(0.0, d_i * nonzero_grads[i_nz_index] + d_j * nonzero_grads[i_nz_index + nonzero_count])
-                
-            objective += dot * dot
-
-        objective *= 1.0 - image[j + i * cols]
-        output[j + i * cols] = objective
+            dot = d_i * nz_grad_i + d_j * nz_grad_j
+            
+            objective += dot * dot / (0.0001 + fabs(d_i * d_i + d_j * d_j))
+        
+        output[j + i * cols] = fmax(0, objective) * (1.0 - image[j + i * cols])
         
     global_size = (max_pixel_count, max_pixel_count)
 
@@ -61,7 +57,8 @@ def _make_cl_func(context, max_pixel_count):
                 .arg(ad_nonzero_count).copy_in()
                 .arg(ad_output, is_readonly=False).copy_out()
                 .arg(ad_rows).copy_in()
-                .arg(ad_cols).copy_in())
+                .arg(ad_cols).copy_in()
+                )
     
     cl_func = CLFunc(func_desc).compile(context or cl.create_some_context(False))
     
@@ -71,7 +68,7 @@ def _make_cl_func(context, max_pixel_count):
         
         nonzero_coords = np.array(nonzeros, np.int32).T
         nonzero_count = nonzero_coords.shape[0]
-        nonzero_grads = gradients[:, nonzero_coords[:, 0], nonzero_coords[:, 1]]
+        nonzero_grads = gradients[:, nonzero_coords[:, 0], nonzero_coords[:, 1]].T
 
         cl_func({
             ad_image: image.flatten(),
@@ -99,15 +96,13 @@ def _get_objective(params):
     # Calculate the normalized displacements from all image-coords to the gradient coord
     # ((,2) - (p, 2)) / (p, 1) = (p, 2)
     d = nz - image_coords
-    disp = d / (0.001 + np.linalg.norm(d, axis=1).reshape(-1, 1))
 
     # Get the gradient at the gradient coord
     # (2,)
     grad = gradients[:, nz[0], nz[1]]
 
-    # Calculate the dot product between the normalized displacements and the gradient and square it
     # (p, 2) * (2,) = (p,)
-    return np.inner(disp, grad)**2
+    return np.square(np.inner(d, grad)) / (0.0001 + np.square(d[:, 0]) + np.square(d[:, 1]))
 
 def _get_objectives(image_array, gradients, nonzeros, pool):
     # Produce all possible image and nonzero coordinates
@@ -131,7 +126,7 @@ class PupilDetector:
         if cluster_mode == "bestcluster":
             self.cluster = KMeans(n_clusters=20, n_init=1, tol=0.01, max_iter=30, precompute_distances=True, verbose=0)
         elif cluster_mode == "bestpixel":
-            self.cluster = KMeans(n_clusters=10, n_init=5, tol=0.01, max_iter=30, precompute_distances=True, verbose=0)
+            self.cluster = KMeans(n_clusters=20, n_init=1, tol=0.01, max_iter=30, precompute_distances=True, verbose=0)
         elif cluster_mode != None:
             raise Exception("Unknown cluster mode " + str(cluster_mode))
 
@@ -197,6 +192,13 @@ class PupilDetector:
             
             cluster_result = self.cluster.fit(data)
 
+            '''
+            cluster_colors = np.random.rand(cluster_result.n_clusters, 3)
+            cluster_image = cluster_colors[cluster_result.labels_].reshape(image_array.shape[0], image_array.shape[1], 3)
+            cluster_image *= image_array.reshape(image_array.shape[0], image_array.shape[1], 1)
+            cv2.circle(cluster_image, (highest_i, highest_j), 1, (255, 255, 255))
+            '''
+
             if self.cluster_mode == "bestpixel":
                 # Get the cluster center of the pixel with the highest objective
 
@@ -219,5 +221,11 @@ class PupilDetector:
                 highest_center = cluster_result.cluster_centers_[np.argmax(scores)]
                 highest_i = int(round(highest_center[0] * image_array.shape[0]))
                 highest_j = int(round(highest_center[1] * image_array.shape[1]))
+
+            '''
+            cv2.circle(cluster_image, (highest_i, highest_j), 1, (255, 0, 0))
+            cluster_image = cv2.resize(cluster_image, (256, 256), interpolation=cv2.INTER_LINEAR)
+            cv2.imshow("frame2", cluster_image)
+            '''
 
         return ((2**pyr_count)*highest_i, (2**pyr_count)*highest_j)

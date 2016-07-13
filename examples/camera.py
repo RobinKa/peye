@@ -26,12 +26,10 @@ def main():
         t_eyes = time()
         eyes = eye_detector.detect(gray)
         fps_eyes = 0.5 * fps_eyes + 0.5 / max(0.001, time() - t_eyes)
-        print("FPS Eyes:", fps_eyes)
 
         t_pupils = time()
         pupils = [pupil_detector.detect(gray[eye[1]:eye[3], eye[0]:eye[2]]) for eye in eyes]
         fps_pupils = 0.5 * fps_pupils + 0.5 / max(0.001, time() - t_pupils)
-        print("FPS Pupils:", fps_pupils)
 
         for eye, pupil in zip(eyes, pupils):
             cv2.rectangle(
@@ -54,7 +52,8 @@ def main():
         fps_total = 0.5 * fps_total + 0.5 / max(0.001, time() - t_total)
         print("FPS Total, Eyes, Pupils:", "%.2f" % fps_total, "%.2f" % fps_eyes, "%.2f" % fps_pupils)
         print("T Eyes, %Pupils:", "%.2f" % (fps_total / fps_eyes), "%.2f" % (fps_total / fps_pupils))
-    
+
+    cv2.destroyAllWindows()
 if __name__ == "__main__":
     main()
         
