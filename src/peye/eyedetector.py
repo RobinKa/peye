@@ -12,7 +12,6 @@ class EyeDetector:
         )
         
         for (ex, ey, ew, eh) in eyes:
-            cv2.rectangle(im, (ex, ey), (ex + ew, ey + eh), (255, 0, 0), 2)
             detected_eyes.append((ex, ey, ex + ew, ey + eh))
         
         return detected_eyes
