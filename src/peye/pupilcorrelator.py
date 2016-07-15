@@ -1,16 +1,10 @@
-import itertools
+import cv2
+import numpy as np
 
 class PupilCorrelator:
-    def _get_error(pupils, locations):
-        error = 0
-        
-        for pupil, loc in zip(pupils, locations):
-            if pupil is not None and loc is not None:
-                dx = pupil.location[0] - loc[0]
-                dy = pupil.location[1] - loc[1]
-                error += dx*dx + dy*dy
-
-        return error
+    def __init__(self, max_distance=None):
+        self.max_distance = max_distance
+        self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=True)
 
     def get_matches(self, pupils, locations):
         '''
@@ -33,33 +27,30 @@ class PupilCorrelator:
         Interpretation: c=u, d=v, a and b are removed pupils
         '''
 
-        matched_pupils = []
-        new_locations = []
-        removed_pupils = []
+        if len(locations) == 0:
+            return [ None ] * len(pupils)
 
-        # More pupils than locations: remove worst pupils
-        # More locations than pupils: add new pupils
-        # Same: match
+        matches = self.matcher.match(np.array([pupil.location for pupil in pupils], np.float32), np.array(locations, np.float32))
+        c = pupils.copy()
 
-        location_candidates = locations.copy()
-        pupil_candidate = pupils.copy()
+        matched_loc_indices = []
+        matched_pup_indices = []
 
-        len_diff = len(locations) - len(pupils)
+        # Match pupil<->location
+        for match in matches:
+            if self.max_distance is None or match.distance <= self.max_distance:
+                c[match.queryIdx] = locations[match.trainIdx]
+                matched_loc_indices.append(match.trainIdx)
+                matched_pup_indices.append(match.queryIdx)
 
-        if(len_diff < 0):
-            location_candidates += [None] * -len_diff
-        else:
-            pupil_candidate += [None] * len_diff
+        # New locations
+        for i, loc in enumerate(locations):
+            if not i in matched_loc_indices:
+                c.append(loc)
 
-        location_candidates = itertools.permutations(location_candidates)
+        # Removed pupils
+        for i in range(len(pupils)):
+            if not i in matched_pup_indices:
+                c[i] = None
         
-        # Find the location assignments that cause the lowest error
-        min_error = None
-        min_location_candidate = None
-        for location_candidate in location_candidates:
-            error = PupilCorrelator._get_error(pupil_candidate, location_candidate)
-            if min_error is None or error < min_error:
-                min_location_candidate = location_candidate
-                min_error = error
-        
-        return min_location_candidate
+        return c

@@ -5,7 +5,9 @@ class Pupil:
         self.smoothing_factor = smoothing_factor
         self.location = loc
         self.id = Pupil.next_id
-        self.remove_count = 0
+        self.certainty = 0
+
+        self.last_locations = []
         Pupil.next_id += 1
 
     def update_location(self, new_loc):
