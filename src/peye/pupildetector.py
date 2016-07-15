@@ -2,7 +2,7 @@ import math
 import itertools
 import cv2
 import numpy as np
-import importlib
+import importlib.util
 from os import cpu_count
 from multiprocessing.pool import Pool
 
