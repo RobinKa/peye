@@ -173,7 +173,7 @@ class PupilDetector:
 
         objectives = objectives.reshape(image_array.shape)
 
-        (highest_i, highest_j) = np.unravel_index(objectives.argmax(), image_array.shape)
+        (highest_j, highest_i) = np.unravel_index(objectives.argmax(), image_array.shape)
         
         if self.cluster_mode != None:
             # Normalize the objective to be between 0 and 1 for clustering
